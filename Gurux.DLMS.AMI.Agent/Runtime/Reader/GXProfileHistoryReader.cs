@@ -223,6 +223,7 @@ internal static class GXProfileHistoryReader
                 throw new InvalidOperationException("Profile range read did not return an array.");
             }
             var rows = new List<GXProfileRow>();
+            var dropped = new List<DateTimeOffset>();
             DateTimeOffset? previous = null;
             foreach (object item in value as GXArray ?? [])
             {
@@ -252,9 +253,13 @@ internal static class GXProfileHistoryReader
                     {
                     rows.Add(new GXProfileRow { CapturedAt = captured, Value = xml });
                 }
+                else
+                {
+                    dropped.Add(captured);
+                }
             }
             token.ThrowIfCancellationRequested();
-            log?.Invoke($"Profile history job: meter returned {(value as GXArray)?.Count} rows, kept {rows.Count}, first {rows.FirstOrDefault()?.CapturedAt:O}, last {rows.LastOrDefault()?.CapturedAt:O}");
+            log?.Invoke($"Profile history job: meter returned {(value as GXArray)?.Count} rows, kept {rows.Count}, first {rows.FirstOrDefault()?.CapturedAt:O}, last {rows.LastOrDefault()?.CapturedAt:O}, dropped outside job [{string.Join(", ", dropped.Select(d => d.ToString("O")))}]");
             await commit(new GXProfileCommit { SpanId = job.IntervalId, TaskId = job.TaskId, Completed = true, Rows = [.. rows] });
         }
     }
