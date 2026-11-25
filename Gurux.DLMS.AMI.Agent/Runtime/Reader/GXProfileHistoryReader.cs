@@ -85,9 +85,21 @@ internal static class GXProfileHistoryReader
             throw new InvalidOperationException("Profile history response targets a different task or attribute.");
         }
         await Execute(response.Intervals, clockColumn, (int)profile.SortMethod == 1 ? checked((int)profile.CapturePeriod) : 0,
-            (start, end) => reader.ReadRowsByRange(profile, start.UtcDateTime, end.UtcDateTime),
+            (start, end) => reader.ReadRowsByRange(profile, ToMeterClock(start), ToMeterClock(end)),
             commit => http.PostAsJson("api/ProfileHistory/Commit", commit, token), token, reader.Client.UseUtc2NormalTime);
     }
+
+    /// <summary>
+    /// Converts a planned interval boundary to the wall-clock time used in the range selection.
+    /// Meters store profile clocks without a time zone deviation, so they compare the requested range with
+    /// their own local stamps. Sending the UTC time shifts the end by the UTC offset and drops the last rows
+    /// of every job (the row stamps are read back as local time, as in the legacy read in Reader.cs).
+    /// </summary>
+    /// <param name="value">Interval boundary from the server.</param>
+    /// <param name="zone">Time zone of the meter clock; the local time zone of the agent when not given.</param>
+    /// <returns>The boundary as an unspecified-kind wall-clock time in the meter's zone.</returns>
+    internal static DateTime ToMeterClock(DateTimeOffset value, TimeZoneInfo? zone = null)
+        => TimeZoneInfo.ConvertTime(value, zone ?? TimeZoneInfo.Local).DateTime;
 
     /// <summary>Reads a clockless single-row profile as an ordinary buffer snapshot.</summary>
     /// <param name="profile">Profile generic object whose buffered history is requested.</param>
