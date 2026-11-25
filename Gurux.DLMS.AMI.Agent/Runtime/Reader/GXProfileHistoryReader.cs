@@ -30,6 +30,7 @@ using Gurux.DLMS.AMI.Shared.DTOs;
 using Gurux.DLMS.AMI.Shared.Rest;
 using Gurux.DLMS.Enums;
 using Gurux.DLMS.Objects;
+using Microsoft.Extensions.Logging;
 
 namespace Gurux.DLMS.AMI.Agent.Worker;
 
@@ -43,7 +44,7 @@ internal static class GXProfileHistoryReader
     /// <param name="profile">Profile generic object whose buffered history is requested.</param>
     /// <param name="token">Cancels the operation when its owning lifetime ends.</param>
     /// <returns>A task representing this operation: Reads profile metadata and plans bounded history intervals before persisting the retrieved rows.</returns>
-    internal static async Task Read(HttpClient http, GXDLMSReader reader, GXTask task, GXDLMSProfileGeneric profile, CancellationToken token)
+    internal static async Task Read(HttpClient http, GXDLMSReader reader, GXTask task, GXDLMSProfileGeneric profile, CancellationToken token, Microsoft.Extensions.Logging.ILogger? logger = null)
     {
         Guid attributeId = task.Object?.Attributes?.FirstOrDefault(a => a.Template?.Index == 2)?.Id ?? Guid.Empty;
         if (task.Id == Guid.Empty || attributeId == Guid.Empty)
@@ -86,7 +87,8 @@ internal static class GXProfileHistoryReader
         }
         await Execute(response.Intervals, clockColumn, (int)profile.SortMethod == 1 ? checked((int)profile.CapturePeriod) : 0,
             (start, end) => reader.ReadRowsByRange(profile, ToMeterClock(start), ToMeterClock(end)),
-            commit => http.PostAsJson("api/ProfileHistory/Commit", commit, token), token, reader.Client.UseUtc2NormalTime);
+            commit => http.PostAsJson("api/ProfileHistory/Commit", commit, token), token, reader.Client.UseUtc2NormalTime,
+            logger is null ? null : (Action<string>)(m => logger.LogInformation("{Message}", m)));
     }
 
     /// <summary>
@@ -201,7 +203,7 @@ internal static class GXProfileHistoryReader
     /// <param name="useUtc2NormalTime">Whether device timestamps use UTC-to-local conversion when planning intervals.</param>
     /// <returns>A task representing this operation: Executes planned profile intervals and persists their ordered history results.</returns>
     internal static async Task Execute(IEnumerable<GXProfileReadInterval> jobs, int clockColumn, int capturePeriod,
-        Func<DateTimeOffset, DateTimeOffset, object?> read, Func<GXProfileCommit, Task> commit, CancellationToken token = default, bool useUtc2NormalTime = false)
+        Func<DateTimeOffset, DateTimeOffset, object?> read, Func<GXProfileCommit, Task> commit, CancellationToken token = default, bool useUtc2NormalTime = false, Action<string>? log = null)
     {
         foreach (var job in jobs)
         {
@@ -213,6 +215,7 @@ internal static class GXProfileHistoryReader
             // Selective access endpoints are inclusive on some meters. Filtering below owns [start,end).
             var selectionStart = job.End - job.Start < TimeSpan.FromHours(24)
                 ? job.Start.AddSeconds(-Math.Min(1, (TimeSpan.FromHours(24) - (job.End - job.Start)).TotalSeconds)) : job.Start;
+            log?.Invoke($"Profile history job {job.Start:O} - {job.End:O}: selection {selectionStart:O} - {job.End:O}, agent time zone {TimeZoneInfo.Local.Id}, meter range {ToMeterClock(selectionStart):O} - {ToMeterClock(job.End):O}");
             object? value = read(selectionStart, job.End);
             token.ThrowIfCancellationRequested();
             if (value is not GXArray)
@@ -251,6 +254,7 @@ internal static class GXProfileHistoryReader
                 }
             }
             token.ThrowIfCancellationRequested();
+            log?.Invoke($"Profile history job: meter returned {(value as GXArray)?.Count} rows, kept {rows.Count}, first {rows.FirstOrDefault()?.CapturedAt:O}, last {rows.LastOrDefault()?.CapturedAt:O}");
             await commit(new GXProfileCommit { SpanId = job.IntervalId, TaskId = job.TaskId, Completed = true, Rows = [.. rows] });
         }
     }

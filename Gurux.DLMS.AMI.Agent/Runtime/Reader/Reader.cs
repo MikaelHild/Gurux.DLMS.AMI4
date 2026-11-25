@@ -211,7 +211,7 @@ namespace Gurux.DLMS.AMI.Agent.Worker
                 ?? throw new ArgumentException("Task object is missing.", nameof(task));
             if (obj is GXDLMSProfileGeneric profile && task.Index == 2)
             {
-                await GXProfileHistoryReader.Read(http, reader, task, profile, token);
+                await GXProfileHistoryReader.Read(http, reader, task, profile, token, logger);
                 return;
             }
             bool reaNextDay = false;
